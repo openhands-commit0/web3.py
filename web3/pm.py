@@ -1,95 +1,25 @@
-from abc import (
-    ABC,
-    abstractmethod,
-)
+from abc import ABC, abstractmethod
 import json
-from pathlib import (
-    Path,
-)
-from typing import (
-    Any,
-    Dict,
-    Iterable,
-    NamedTuple,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-)
-
-from eth_typing import (
-    URI,
-    Address,
-    ChecksumAddress,
-    ContractName,
-    Manifest,
-)
-from eth_utils import (
-    is_canonical_address,
-    is_checksum_address,
-    to_checksum_address,
-    to_text,
-    to_tuple,
-)
-
-from ens import (
-    ENS,
-)
-from ethpm import (
-    ASSETS_DIR,
-    Package,
-)
-from ethpm.exceptions import (
-    EthPMException,
-    ManifestValidationError,
-)
-from ethpm.uri import (
-    is_supported_content_addressed_uri,
-    resolve_uri_contents,
-)
-from ethpm.validation.manifest import (
-    validate_manifest_against_schema,
-    validate_raw_manifest_format,
-)
-from ethpm.validation.package import (
-    validate_package_name,
-    validate_package_version,
-)
-from web3 import (
-    Web3,
-)
-from web3._utils.ens import (
-    is_ens_name,
-)
-from web3.exceptions import (
-    InvalidAddress,
-    NameNotFound,
-)
-from web3.module import (
-    Module,
-)
-
-# Package Management is still in alpha, and its API is likely to change, so it
-# is not automatically available on a web3 instance. To use the `PM` module,
-# please enable the package management API on an individual web3 instance.
-#
-# >>> from web3 import Web3, IPCProvider
-# >>> w3 = Web3(IPCProvider(...))
-# >>> w3.pm
-# AttributeError: The Package Management feature is disabled by default ...
-# >>> w3.enable_unstable_package_management_api()
-# >>> w3.pm
-# <web3.pm.PM at 0x....>
-
-T = TypeVar("T")
-
+from pathlib import Path
+from typing import Any, Dict, Iterable, NamedTuple, Tuple, Type, TypeVar, Union, cast
+from eth_typing import URI, Address, ChecksumAddress, ContractName, Manifest
+from eth_utils import is_canonical_address, is_checksum_address, to_checksum_address, to_text, to_tuple
+from ens import ENS
+from ethpm import ASSETS_DIR, Package
+from ethpm.exceptions import EthPMException, ManifestValidationError
+from ethpm.uri import is_supported_content_addressed_uri, resolve_uri_contents
+from ethpm.validation.manifest import validate_manifest_against_schema, validate_raw_manifest_format
+from ethpm.validation.package import validate_package_name, validate_package_version
+from web3 import Web3
+from web3._utils.ens import is_ens_name
+from web3.exceptions import InvalidAddress, NameNotFound
+from web3.module import Module
+T = TypeVar('T')
 
 class ReleaseData(NamedTuple):
     package_name: str
     version: str
     manifest_uri: URI
-
 
 class ERC1319Registry(ABC):
     """
@@ -123,10 +53,6 @@ class ERC1319Registry(ABC):
         """
         pass
 
-    #
-    # Write API
-    #
-
     @abstractmethod
     def _release(self, package_name: str, version: str, manifest_uri: str) -> bytes:
         """
@@ -140,10 +66,6 @@ class ERC1319Registry(ABC):
                                 release contents
         """
         pass
-
-    #
-    # Read API
-    #
 
     @abstractmethod
     def _get_package_name(self, package_id: bytes) -> str:
@@ -241,10 +163,7 @@ class ERC1319Registry(ABC):
             * ``w3``: Web3 instance on which to deploy the new registry.
         """
         pass
-
-
 BATCH_SIZE = 100
-
 
 class SimpleRegistry(ERC1319Registry):
     """
@@ -253,75 +172,10 @@ class SimpleRegistry(ERC1319Registry):
     """
 
     def __init__(self, address: ChecksumAddress, w3: Web3) -> None:
-        abi = get_simple_registry_manifest()["contractTypes"]["PackageRegistry"]["abi"]
+        abi = get_simple_registry_manifest()['contractTypes']['PackageRegistry']['abi']
         self.registry = w3.eth.contract(address=address, abi=abi)
         self.address = address
         self.w3 = w3
-
-    def _release(self, package_name: str, version: str, manifest_uri: str) -> bytes:
-        tx_hash = self.registry.functions.release(
-            package_name, version, manifest_uri
-        ).transact()
-        self.w3.eth.wait_for_transaction_receipt(tx_hash)
-        return self._get_release_id(package_name, version)
-
-    def _get_package_name(self, package_id: bytes) -> str:
-        package_name = self.registry.functions.getPackageName(package_id).call()
-        return package_name
-
-    @to_tuple
-    def _get_all_package_ids(self) -> Iterable[bytes]:
-        num_packages = self._num_package_ids()
-        pointer = 0
-        while pointer < num_packages:
-            new_ids, new_pointer = self.registry.functions.getAllPackageIds(
-                pointer, (pointer + BATCH_SIZE)
-            ).call()
-            if not new_pointer > pointer:
-                break
-            yield from reversed(new_ids)
-            pointer = new_pointer
-
-    def _get_release_id(self, package_name: str, version: str) -> bytes:
-        return self.registry.functions.getReleaseId(package_name, version).call()
-
-    @to_tuple
-    def _get_all_release_ids(self, package_name: str) -> Iterable[bytes]:
-        num_releases = self._num_release_ids(package_name)
-        pointer = 0
-        while pointer < num_releases:
-            new_ids, new_pointer = self.registry.functions.getAllReleaseIds(
-                package_name, pointer, (pointer + BATCH_SIZE)
-            ).call()
-            if not new_pointer > pointer:
-                break
-            yield from reversed(new_ids)
-            pointer = new_pointer
-
-    def _get_release_data(self, release_id: bytes) -> ReleaseData:
-        name, version, uri = self.registry.functions.getReleaseData(release_id).call()
-        return ReleaseData(name, version, uri)
-
-    def _generate_release_id(self, package_name: str, version: str) -> bytes:
-        return self.registry.functions.generateReleaseId(package_name, version).call()
-
-    def _num_package_ids(self) -> int:
-        return self.registry.functions.numPackageIds().call()
-
-    def _num_release_ids(self, package_name: str) -> int:
-        return self.registry.functions.numReleaseIds(package_name).call()
-
-    @classmethod
-    def deploy_new_instance(cls, w3: Web3) -> "SimpleRegistry":
-        manifest = get_simple_registry_manifest()
-        registry_package = Package(manifest, w3)
-        registry_factory = registry_package.get_contract_factory(
-            ContractName("PackageRegistry")
-        )
-        tx_hash = registry_factory.constructor().transact()
-        tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-        return cls(tx_receipt["contractAddress"], w3)
-
 
 class PM(Module):
     """
@@ -330,9 +184,7 @@ class PM(Module):
     `ERC1319  <https://github.com/ethereum/EIPs/issues/1319>`__, set as
     its ``registry`` attribute.
     """
-
-    # mypy types
-    w3: "Web3"
+    w3: 'Web3'
 
     def get_package_from_manifest(self, manifest: Manifest) -> Package:
         """
@@ -342,7 +194,7 @@ class PM(Module):
         * Parameters:
             * ``manifest``: A dict representing a valid manifest
         """
-        return Package(manifest, self.w3)
+        pass
 
     def get_package_from_uri(self, manifest_uri: URI) -> Package:
         """
@@ -354,9 +206,9 @@ class PM(Module):
         * Parameters:
             * ``uri``: Must be a valid content-addressed URI
         """
-        return Package.from_uri(manifest_uri, self.w3)
+        pass
 
-    def get_local_package(self, package_name: str, ethpm_dir: Path = None) -> Package:
+    def get_local_package(self, package_name: str, ethpm_dir: Path=None) -> Package:
         """
         Returns a `Package <https://github.com/ethpm/py-ethpm/blob/master/ethpm/package.py>`__  # noqa: E501
         instance built with the Manifest found at the package name in your local ethpm_dir.
@@ -365,25 +217,7 @@ class PM(Module):
             * ``package_name``: Must be the name of a package installed locally.
             * ``ethpm_dir``: Path pointing to the target ethpm directory (optional).
         """
-        if not ethpm_dir:
-            ethpm_dir = Path.cwd() / "_ethpm_packages"
-
-        if not ethpm_dir.name == "_ethpm_packages" or not ethpm_dir.is_dir():
-            raise EthPMException(
-                f"{ethpm_dir} is not a valid ethPM packages directory."
-            )
-
-        local_packages = [pkg.name for pkg in ethpm_dir.iterdir() if pkg.is_dir()]
-        if package_name not in local_packages:
-            raise EthPMException(
-                f"Package: {package_name} not found in {ethpm_dir}. "
-                f"Available packages include: {local_packages}."
-            )
-
-        target_manifest = json.loads(
-            (ethpm_dir / package_name / "manifest.json").read_text()
-        )
-        return self.get_package_from_manifest(target_manifest)
+        pass
 
     def set_registry(self, address: Union[Address, ChecksumAddress, ENS]) -> None:
         """
@@ -398,25 +232,7 @@ class PM(Module):
         * Parameters:
             * ``address``: Address of on-chain Registry.
         """
-        if is_canonical_address(address):
-            addr_string = to_text(address)
-            self.registry = SimpleRegistry(to_checksum_address(addr_string), self.w3)
-        elif is_checksum_address(address):
-            self.registry = SimpleRegistry(cast(ChecksumAddress, address), self.w3)
-        elif is_ens_name(address):
-            self._validate_set_ens()
-            ens = cast(ENS, self.w3.ens)
-            addr_lookup = ens.address(str(address))
-            if not addr_lookup:
-                raise NameNotFound(
-                    f"No address found after ENS lookup for name: {address!r}."
-                )
-            self.registry = SimpleRegistry(addr_lookup, self.w3)
-        else:
-            raise EthPMException(
-                "Expected a canonical/checksummed address or ENS name for the address, "
-                f"instead received {type(address)}."
-            )
+        pass
 
     def deploy_and_set_registry(self) -> ChecksumAddress:
         """
@@ -430,12 +246,9 @@ class PM(Module):
 
            w3.ens.setup_address(ens_name, w3.pm.registry.address)
         """
-        self.registry = SimpleRegistry.deploy_new_instance(self.w3)
-        return to_checksum_address(self.registry.address)
+        pass
 
-    def release_package(
-        self, package_name: str, version: str, manifest_uri: URI
-    ) -> bytes:
+    def release_package(self, package_name: str, version: str, manifest_uri: URI) -> bytes:
         """
         Returns the release id generated by releasing a package on the current registry.
         Requires ``web3.PM`` to have a registry set. Requires
@@ -450,25 +263,7 @@ class PM(Module):
                                 supported.
 
         """
-        validate_is_supported_manifest_uri(manifest_uri)
-        raw_manifest = to_text(resolve_uri_contents(manifest_uri))
-        validate_raw_manifest_format(raw_manifest)
-        manifest = json.loads(raw_manifest)
-        validate_manifest_against_schema(manifest)
-        if package_name != manifest["name"]:
-            raise ManifestValidationError(
-                f"Provided package name: {package_name} does not match the package "
-                f"name found in the manifest: {manifest['name']}."
-            )
-
-        if version != manifest["version"]:
-            raise ManifestValidationError(
-                f"Provided package version: {version} does not match the package "
-                f"version found in the manifest: {manifest['version']}."
-            )
-
-        self._validate_set_registry()
-        return self.registry._release(package_name, version, manifest_uri)
+        pass
 
     @to_tuple
     def get_all_package_names(self) -> Iterable[str]:
@@ -476,36 +271,27 @@ class PM(Module):
         Returns a tuple containing all the package names
         available on the current registry.
         """
-        self._validate_set_registry()
-        package_ids = self.registry._get_all_package_ids()
-        for package_id in package_ids:
-            yield self.registry._get_package_name(package_id)
+        pass
 
     def get_package_count(self) -> int:
         """
         Returns the number of packages available on the current registry.
         """
-        self._validate_set_registry()
-        return self.registry._num_package_ids()
+        pass
 
     def get_release_count(self, package_name: str) -> int:
         """
         Returns the number of releases of the given package name
         available on the current registry.
         """
-        validate_package_name(package_name)
-        self._validate_set_registry()
-        return self.registry._num_release_ids(package_name)
+        pass
 
     def get_release_id(self, package_name: str, version: str) -> bytes:
         """
         Returns the 32 byte identifier of a release for the given package
         name and version, if they are available on the current registry.
         """
-        validate_package_name(package_name)
-        validate_package_version(version)
-        self._validate_set_registry()
-        return self.registry._get_release_id(package_name, version)
+        pass
 
     @to_tuple
     def get_all_package_releases(self, package_name: str) -> Iterable[Tuple[str, str]]:
@@ -513,12 +299,7 @@ class PM(Module):
         Returns a tuple of release data (version, manifest_ur) for every release of the
         given package name available on the current registry.
         """
-        validate_package_name(package_name)
-        self._validate_set_registry()
-        release_ids = self.registry._get_all_release_ids(package_name)
-        for release_id in release_ids:
-            release_data = self.registry._get_release_data(release_id)
-            yield (release_data.version, release_data.manifest_uri)
+        pass
 
     def get_release_id_data(self, release_id: bytes) -> ReleaseData:
         """
@@ -528,8 +309,7 @@ class PM(Module):
         * Parameters:
             * ``release_id``: 32 byte release identifier
         """
-        self._validate_set_registry()
-        return self.registry._get_release_data(release_id)
+        pass
 
     def get_release_data(self, package_name: str, version: str) -> ReleaseData:
         """
@@ -540,11 +320,7 @@ class PM(Module):
             * ``name``: Must be a valid package name.
             * ``version``: Must be a valid package version.
         """
-        validate_package_name(package_name)
-        validate_package_version(version)
-        self._validate_set_registry()
-        release_id = self.registry._get_release_id(package_name, version)
-        return self.get_release_id_data(release_id)
+        pass
 
     def get_package(self, package_name: str, version: str) -> Package:
         """
@@ -556,47 +332,4 @@ class PM(Module):
             * ``name``: Must be a valid package name.
             * ``version``: Must be a valid package version.
         """
-        validate_package_name(package_name)
-        validate_package_version(version)
-        self._validate_set_registry()
-        release_data = self.get_release_data(package_name, version)
-        return self.get_package_from_uri(URI(release_data.manifest_uri))
-
-    def _validate_set_registry(self) -> None:
-        try:
-            self.registry
-        except AttributeError:
-            raise EthPMException(
-                "web3.pm does not have a set registry. "
-                "Please set registry with either: "
-                "web3.pm.set_registry(address) or "
-                "web3.pm.deploy_and_set_registry()"
-            )
-        if not isinstance(self.registry, ERC1319Registry):
-            raise EthPMException(
-                "web3.pm requires an instance of a subclass of ERC1319Registry "
-                "to be set as the web3.pm.registry attribute. Instead found: "
-                f"{type(self.registry)}."
-            )
-
-    def _validate_set_ens(self) -> None:
-        if not self.w3:
-            raise InvalidAddress(
-                "Could not look up ENS address because no web3 connection available"
-            )
-        elif not self.w3.ens:
-            raise InvalidAddress(
-                "Could not look up ENS address because web3.ens is not set up"
-            )
-
-
-def get_simple_registry_manifest() -> Dict[str, Any]:
-    return json.loads((ASSETS_DIR / "simple-registry" / "v3.json").read_text())
-
-
-def validate_is_supported_manifest_uri(uri: URI) -> None:
-    if not is_supported_content_addressed_uri(uri):
-        raise ManifestValidationError(
-            f"URI: {uri} is not a valid content-addressed URI. "
-            "Currently only IPFS and Github content-addressed URIs are supported."
-        )
+        pass
