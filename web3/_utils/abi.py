@@ -237,6 +237,62 @@ BASE_TYPE_REGEX = '|'.join((_type + '(?![a-z0-9])' for _type in itertools.chain(
 SUB_TYPE_REGEX = '\\[[0-9]*\\]'
 TYPE_REGEX = '^(?:{base_type})(?:(?:{sub_type})*)?$'.format(base_type=BASE_TYPE_REGEX, sub_type=SUB_TYPE_REGEX)
 
+def is_recognized_type(abi_type: TypeStr) -> bool:
+    """
+    Returns True if the ABI type is a recognized type, False otherwise.
+    """
+    return bool(re.match(TYPE_REGEX, abi_type))
+
+def is_array_type(abi_type: TypeStr) -> bool:
+    """
+    Returns True if the ABI type is an array type, False otherwise.
+    """
+    return bool(re.match(ARRAY_REGEX, abi_type))
+
+def sub_type_of_array_type(abi_type: TypeStr) -> TypeStr:
+    """
+    Returns the type of the array elements.
+    """
+    if not is_array_type(abi_type):
+        raise ValueError(f"Not an array type: {abi_type}")
+    return re.sub(END_BRACKETS_OF_ARRAY_TYPE_REGEX, '', abi_type)
+
+def is_bool_type(abi_type: TypeStr) -> bool:
+    """
+    Returns True if the ABI type is a boolean type, False otherwise.
+    """
+    return abi_type == 'bool'
+
+def is_int_type(abi_type: TypeStr) -> bool:
+    """
+    Returns True if the ABI type is a signed integer type, False otherwise.
+    """
+    return abi_type.startswith('int') and not abi_type.startswith('uint')
+
+def is_uint_type(abi_type: TypeStr) -> bool:
+    """
+    Returns True if the ABI type is an unsigned integer type, False otherwise.
+    """
+    return abi_type.startswith('uint')
+
+def is_address_type(abi_type: TypeStr) -> bool:
+    """
+    Returns True if the ABI type is an address type, False otherwise.
+    """
+    return abi_type == 'address'
+
+def is_bytes_type(abi_type: TypeStr) -> bool:
+    """
+    Returns True if the ABI type is a bytes type, False otherwise.
+    """
+    return abi_type == 'bytes' or abi_type.startswith('bytes') and re.match('^bytes[0-9]+$', abi_type)
+
+def is_string_type(abi_type: TypeStr) -> bool:
+    """
+    Returns True if the ABI type is a string type, False otherwise.
+    """
+    return abi_type == 'string'
+
 def size_of_type(abi_type: TypeStr) -> int:
     """
     Returns size in bits of abi_type
