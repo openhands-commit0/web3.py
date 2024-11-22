@@ -10,7 +10,7 @@ from eth_utils import is_boolean, is_bytes, is_checksum_address, is_dict, is_int
 from eth_utils.toolz import assoc
 from hexbytes import HexBytes
 from web3._utils.empty import empty
-from web3._utils.ens import ens_addresses
+from web3._utils.validation_utils import ens_addresses
 from web3._utils.error_formatters_utils import PANIC_ERROR_CODES
 from web3._utils.method_formatters import to_hex_if_integer
 from web3._utils.module_testing.module_testing_utils import assert_contains_log, async_mock_offchain_lookup_request_response, flaky_geth_dev_mining, mock_offchain_lookup_request_response

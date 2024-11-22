@@ -9,7 +9,7 @@ from hexbytes import (
     HexBytes,
 )
 
-from web3._utils.ens import (
+from web3._utils.validation_utils import (
     ens_addresses,
 )
 from web3._utils.rpc_abi import (

@@ -11,7 +11,7 @@ from ethpm.uri import is_supported_content_addressed_uri, resolve_uri_contents
 from ethpm.validation.manifest import validate_manifest_against_schema, validate_raw_manifest_format
 from ethpm.validation.package import validate_package_name, validate_package_version
 from web3 import Web3
-from web3._utils.ens import is_ens_name
+from web3._utils.validation_utils import is_ens_name
 from web3.exceptions import InvalidAddress, NameNotFound
 from web3.module import Module
 T = TypeVar('T')

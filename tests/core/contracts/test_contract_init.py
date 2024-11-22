@@ -1,6 +1,6 @@
 import pytest
 
-from web3._utils.ens import (
+from web3._utils.validation_utils import (
     contract_ens_addresses,
     ens_addresses,
 )

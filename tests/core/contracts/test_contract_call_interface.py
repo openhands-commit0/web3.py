@@ -27,7 +27,7 @@ from web3._utils.contract_sources.contract_data.bytes_contracts import (
     BYTES32_CONTRACT_DATA,
     BYTES_CONTRACT_DATA,
 )
-from web3._utils.ens import (
+from web3._utils.validation_utils import (
     contract_ens_addresses,
 )
 from web3.exceptions import (
