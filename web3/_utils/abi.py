@@ -29,7 +29,9 @@ def get_normalized_abi_arg_type(abi_arg: ABIEventParams) -> str:
     makes use of `collapse_if_tuple()` to collapse the appropriate component
     types within a tuple type, if present.
     """
-    pass
+    if isinstance(abi_arg['type'], str):
+        return collapse_if_tuple(dict(abi_arg))
+    raise ValueError(f"Unknown ABI arg type: {abi_arg['type']}")
 
 class AddressEncoder(encoding.AddressEncoder):
     pass
@@ -73,7 +75,57 @@ def merge_args_and_kwargs(function_abi: ABIFunction, args: Sequence[Any], kwargs
     given.  Returns a list of argument values aligned to the order of inputs
     defined in ``function_abi``.
     """
-    pass
+    if not function_abi.get('inputs', None):
+        if args or kwargs:
+            raise TypeError(
+                "Function {} does not accept any arguments".format(function_abi.get('name', '[fallback]'))
+            )
+        return ()
+
+    input_names = get_abi_input_names(function_abi)
+    num_inputs = len(input_names)
+
+    # Check that all positional args are in bounds
+    if len(args) > num_inputs:
+        raise TypeError(
+            "Function {} received too many positional values".format(function_abi.get('name', '[fallback]'))
+        )
+
+    # Check that all keyword args are known
+    for key in kwargs:
+        if key not in input_names:
+            raise TypeError(
+                "{} is not a valid argument for function {}".format(
+                    key, function_abi.get('name', '[fallback]')
+                )
+            )
+
+    # Check that same argument is not passed twice
+    for idx, value in enumerate(args):
+        if input_names[idx] in kwargs:
+            raise TypeError(
+                "Function {} got multiple values for argument {}".format(
+                    function_abi.get('name', '[fallback]'),
+                    input_names[idx],
+                )
+            )
+
+    # Fill remaining arguments with keyword values
+    args_as_kwargs = {name: arg for name, arg in zip(input_names, args)}
+    args_as_kwargs.update(kwargs)
+
+    # Check that all required args have been given
+    missing_args = set(input_names) - set(args_as_kwargs)
+    if missing_args:
+        raise TypeError(
+            "Function {} missing arguments: {}".format(
+                function_abi.get('name', '[fallback]'),
+                ', '.join(missing_args),
+            )
+        )
+
+    # Return values in order of inputs
+    return tuple(args_as_kwargs[name] for name in input_names)
 TUPLE_TYPE_STR_RE = re.compile('^(tuple)((\\[([1-9]\\d*\\b)?])*)??$')
 
 def get_tuple_type_str_parts(s: str) -> Optional[Tuple[str, Optional[str]]]:
@@ -81,14 +133,57 @@ def get_tuple_type_str_parts(s: str) -> Optional[Tuple[str, Optional[str]]]:
     Takes a JSON ABI type string.  For tuple type strings, returns the separated
     prefix and array dimension parts.  For all other strings, returns ``None``.
     """
-    pass
+    match = TUPLE_TYPE_STR_RE.match(s)
+    if match:
+        tuple_prefix = match.group(1)
+        array_part = match.group(2) or None
+        return tuple_prefix, array_part
+    return None
+
+def _align_tuple_items(tuple_components: Sequence[ABIFunctionParams], tuple_value: Union[Sequence[Any], Mapping[Any, Any]]) -> Tuple[Any, ...]:
+    """
+    Takes a list of tuple component ABIs and a sequence or mapping of values.
+    Returns a tuple of values aligned to the component ABIs.
+    """
+    if isinstance(tuple_value, Mapping):
+        return tuple(
+            _align_abi_input(comp_abi, tuple_value[comp_abi['name']])
+            for comp_abi in tuple_components
+        )
+    
+    return tuple(
+        _align_abi_input(comp_abi, tuple_item)
+        for comp_abi, tuple_item in zip(tuple_components, tuple_value)
+    )
 
 def _align_abi_input(arg_abi: ABIFunctionParams, arg: Any) -> Tuple[Any, ...]:
     """
     Aligns the values of any mapping at any level of nesting in ``arg``
     according to the layout of the corresponding abi spec.
     """
-    pass
+    tuple_parts = get_tuple_type_str_parts(arg_abi['type'])
+    if tuple_parts is None:
+        return arg
+
+    tuple_prefix, array_part = tuple_parts
+    tuple_components = arg_abi.get('components', None)
+    if tuple_components is None:
+        raise ValueError("Tuple components missing from ABI")
+
+    if array_part:
+        # If array dimension exists, map alignment to each tuple element
+        if not is_list_like(arg):
+            raise TypeError(
+                "Expected list-like data for type {}, got {}".format(
+                    arg_abi['type'], type(arg)
+                )
+            )
+        return tuple(
+            _align_tuple_items(tuple_components, tuple_item)
+            for tuple_item in arg
+        )
+
+    return _align_tuple_items(tuple_components, arg)
 
 def get_aligned_abi_inputs(abi: ABIFunction, args: Union[Tuple[Any, ...], Mapping[Any, Any]]) -> Tuple[Tuple[Any, ...], Tuple[Any, ...]]:
     """
@@ -98,7 +193,39 @@ def get_aligned_abi_inputs(abi: ABIFunction, args: Union[Tuple[Any, ...], Mappin
     contained in ``args`` may contain nested mappings or sequences corresponding
     to tuple-encoded values in ``abi``.
     """
-    pass
+    inputs = abi.get('inputs', [])
+    if not inputs:
+        if args and not isinstance(args, (tuple, list)) or (isinstance(args, (tuple, list)) and args):
+            raise TypeError(
+                "Function {} does not accept any arguments".format(abi.get('name', '[fallback]'))
+            )
+        return (), ()
+
+    input_types = tuple(collapse_if_tuple(dict(arg)) for arg in inputs)
+
+    if isinstance(args, (list, tuple)):
+        if len(args) > len(inputs):
+            raise TypeError(
+                "Function {} received too many arguments".format(abi.get('name', '[fallback]'))
+            )
+        args_as_list = list(args)
+    else:
+        args_as_list = []
+        for input_abi in inputs:
+            if input_abi['name'] not in args:
+                raise TypeError(
+                    "Function {} missing argument: {}".format(
+                        abi.get('name', '[fallback]'),
+                        input_abi['name']
+                    )
+                )
+            args_as_list.append(args[input_abi['name']])
+
+    for i, input_abi in enumerate(inputs):
+        if i < len(args_as_list):
+            args_as_list[i] = _align_abi_input(input_abi, args_as_list[i])
+
+    return input_types, tuple(args_as_list)
 DYNAMIC_TYPES = ['bytes', 'string']
 INT_SIZES = range(8, 257, 8)
 BYTES_SIZES = range(1, 33)
@@ -114,11 +241,43 @@ def size_of_type(abi_type: TypeStr) -> int:
     """
     Returns size in bits of abi_type
     """
-    pass
+    if not is_recognized_type(abi_type):
+        raise ValueError(f"Unrecognized abi_type: {abi_type}")
+    
+    if is_array_type(abi_type):
+        sub_type = sub_type_of_array_type(abi_type)
+        return size_of_type(sub_type)
+    
+    if abi_type == 'bool':
+        return 8
+    elif abi_type == 'address':
+        return 160
+    elif abi_type.startswith('bytes'):
+        if abi_type == 'bytes':
+            return None
+        return int(abi_type[5:]) * 8
+    elif abi_type.startswith('uint'):
+        return int(abi_type[4:])
+    elif abi_type.startswith('int'):
+        return int(abi_type[3:])
+    elif abi_type == 'string':
+        return None
+    
+    raise ValueError(f"Unsupported abi_type: {abi_type}")
 END_BRACKETS_OF_ARRAY_TYPE_REGEX = '\\[[^]]*\\]$'
 ARRAY_REGEX = '^[a-zA-Z0-9_]+({sub_type})+$'.format(sub_type=SUB_TYPE_REGEX)
 NAME_REGEX = '[a-zA-Z_][a-zA-Z0-9_]*'
 ENUM_REGEX = '^{lib_name}\\.{enum_name}$'.format(lib_name=NAME_REGEX, enum_name=NAME_REGEX)
+
+def _get_data(data_tree: Any) -> Any:
+    """
+    Extract data values from an ABITypedData tree.
+    """
+    if isinstance(data_tree, ABITypedData):
+        return _get_data(data_tree.data)
+    elif isinstance(data_tree, (list, tuple)):
+        return type(data_tree)(_get_data(item) for item in data_tree)
+    return data_tree
 
 @curry
 def map_abi_data(normalizers: Sequence[Callable[[TypeStr, Any], Tuple[TypeStr, Any]]], types: Sequence[TypeStr], data: Sequence[Any]) -> Any:
@@ -144,7 +303,13 @@ def map_abi_data(normalizers: Sequence[Callable[[TypeStr, Any], Tuple[TypeStr, A
     2. Recursively mapping each of the normalizers to the data
     3. Stripping the types back out of the tree
     """
-    pass
+    pipeline = itertools.chain(
+        [abi_data_tree(types)],
+        map(data_tree_map, normalizers),
+        [lambda tree: _get_data(tree)],
+    )
+
+    return pipe(data, *pipeline)
 
 @curry
 def abi_data_tree(types: Sequence[TypeStr], data: Sequence[Any]) -> List[Any]:
@@ -157,7 +322,27 @@ def abi_data_tree(types: Sequence[TypeStr], data: Sequence[Any]) -> List[Any]:
     >>> abi_data_tree(types=["bool[2]", "uint"], data=[[True, False], 0])
     [("bool[2]", [("bool", True), ("bool", False)]), ("uint256", 0)]
     """
-    pass
+    if len(types) != len(data):
+        raise ValueError(
+            "Length mismatch between types and data: got {0} types and {1} data items".format(
+                len(types), len(data)
+            )
+        )
+
+    results = []
+
+    for data_type, data_value in zip(types, data):
+        if is_array_type(data_type):
+            item_type = sub_type_of_array_type(data_type)
+            value_type = [
+                abi_data_tree([item_type], [item])[0]
+                for item in data_value
+            ]
+            results.append(ABITypedData([data_type, value_type]))
+        else:
+            results.append(ABITypedData([data_type, data_value]))
+
+    return results
 
 @curry
 def data_tree_map(func: Callable[[TypeStr, Any], Tuple[TypeStr, Any]], data_tree: Any) -> 'ABITypedData':
@@ -165,7 +350,21 @@ def data_tree_map(func: Callable[[TypeStr, Any], Tuple[TypeStr, Any]], data_tree
     Map func to every ABITypedData element in the tree. func will
     receive two args: abi_type, and data
     """
-    pass
+    if isinstance(data_tree, ABITypedData):
+        abi_type, data = data_tree
+        if is_array_type(abi_type):
+            item_type = sub_type_of_array_type(abi_type)
+            value_type = [
+                data_tree_map(func, item)
+                for item in data
+            ]
+            return ABITypedData(func(abi_type, value_type))
+        else:
+            return ABITypedData(func(abi_type, data))
+    elif isinstance(data_tree, (list, tuple)):
+        return type(data_tree)(data_tree_map(func, item) for item in data_tree)
+    else:
+        return data_tree
 
 class ABITypedData(namedtuple('ABITypedData', 'abi_type, data')):
     """
@@ -193,7 +392,15 @@ def named_tree(abi: Iterable[Union[ABIFunctionParams, ABIFunction, ABIEvent, Dic
     """
     Convert function inputs/outputs or event data tuple to dict with names from ABI.
     """
-    pass
+    names = [item['name'] for item in abi]
+    items_with_name = [
+        (name, data_item)
+        for name, data_item
+        in zip(names, data)
+        if name
+    ]
+
+    return dict(items_with_name)
 
 async def async_data_tree_map(async_w3: 'AsyncWeb3', func: Callable[['AsyncWeb3', TypeStr, Any], Coroutine[Any, Any, Tuple[TypeStr, Any]]], data_tree: Any) -> 'ABITypedData':
     """
@@ -202,7 +409,24 @@ async def async_data_tree_map(async_w3: 'AsyncWeb3', func: Callable[['AsyncWeb3'
     The awaitable method should receive three positional args:
         async_w3, abi_type, and data
     """
-    pass
+    if isinstance(data_tree, ABITypedData):
+        abi_type, data = data_tree
+        if is_array_type(abi_type):
+            item_type = sub_type_of_array_type(abi_type)
+            value_type = [
+                await async_data_tree_map(async_w3, func, item)
+                for item in data
+            ]
+            return ABITypedData(await func(async_w3, abi_type, value_type))
+        else:
+            return ABITypedData(await func(async_w3, abi_type, data))
+    elif isinstance(data_tree, (list, tuple)):
+        return type(data_tree)(
+            await async_data_tree_map(async_w3, func, item)
+            for item in data_tree
+        )
+    else:
+        return data_tree
 
 @reject_recursive_repeats
 async def async_recursive_map(async_w3: 'AsyncWeb3', func: Callable[[Any], Coroutine[Any, Any, TReturn]], data: Any) -> TReturn:
@@ -213,11 +437,31 @@ async def async_recursive_map(async_w3: 'AsyncWeb3', func: Callable[[Any], Corou
     Define the awaitable method so that it only applies to the type of value that you
     want it to apply to.
     """
-    pass
+    result = await func(data)
+    return await async_map_if_collection(
+        lambda item: async_recursive_map(async_w3, func, item),
+        result
+    )
 
 async def async_map_if_collection(func: Callable[[Any], Coroutine[Any, Any, Any]], value: Any) -> Any:
     """
     Apply an awaitable method to each element of a collection or value of a dictionary.
     If the value is not a collection, return it unmodified.
     """
-    pass
+    if isinstance(value, dict):
+        return {
+            key: await async_map_if_collection(func, item)
+            for key, item in value.items()
+        }
+    elif isinstance(value, (list, tuple)):
+        return type(value)(
+            await async_map_if_collection(func, item)
+            for item in value
+        )
+    elif isinstance(value, abc.Collection) and not isinstance(value, (str, bytes)):
+        return type(value)(
+            await async_map_if_collection(func, item)
+            for item in value
+        )
+    else:
+        return value
