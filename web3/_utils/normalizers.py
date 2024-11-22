@@ -11,7 +11,8 @@ from eth_utils.toolz import curry
 from hexbytes import HexBytes
 from ens import ENS, AsyncENS
 from web3._utils.encoding import hexstr_if_str, text_if_str
-from web3._utils.validation_utils import StaticENS, async_validate_name_has_address, is_ens_name, validate_name_has_address
+from web3._utils.validation_utils import is_ens_name
+from web3._utils.ens import StaticENS
 from web3._utils.validation import validate_abi, validate_address
 from web3.exceptions import InvalidAddress, NameNotFound
 from web3.types import ABI
