@@ -14,7 +14,7 @@ from eth_utils import decode_hex, is_bytes, is_list_like, is_string, is_text, to
 from eth_utils.abi import collapse_if_tuple
 from eth_utils.toolz import curry, partial, pipe
 from web3._utils.decorators import reject_recursive_repeats
-from web3._utils.ens import is_ens_name
+from web3._utils.validation_utils import is_ens_name
 from web3._utils.formatters import recursive_map
 from web3.exceptions import FallbackNotFound, MismatchedABI
 from web3.types import ABI, ABIEvent, ABIEventParams, ABIFunction, ABIFunctionParams, TReturn
